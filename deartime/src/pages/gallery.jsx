@@ -6,7 +6,9 @@ import bg from "../assets/background_nostar.png";
 import AlbumCreateModal from "../components/AlbumCreateModal";
 
 // 1. 서버 주소 설정
-const BASE_URL = "http://ec2-43-203-87-207.ap-northeast-2.compute.amazonaws.com:8080";
+// 배포 시 Mixed Content(HTTPS->HTTP) 차단을 막기 위해 프록시를 사용합니다.
+// vercel.json의 rewrites 설정을 통해 /api 요청이 백엔드로 전달됩니다.
+const BASE_URL = "";
 
 const Gallery = () => {
   const navigate = useNavigate();
