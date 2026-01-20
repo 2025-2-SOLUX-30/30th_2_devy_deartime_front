@@ -18,7 +18,6 @@ const Gallery = () => {
   const tabs = ["RECORD", "ALBUM"];
   const [activeIndex, setActiveIndex] = useState(location.state?.activeTab ?? 0);
 
-  // 2. 서버 데이터를 담을 상태 (초기값 빈 배열)
   const [photos, setPhotos] = useState([]);
   const [albums, setAlbums] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,30 +26,27 @@ const Gallery = () => {
   const [editingId, setEditingId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // 공통 헤더 (토큰 포함)
   const getAuthHeaders = () => ({
     "Authorization": `Bearer ${localStorage.getItem("accessToken")}`,
   });
 
-  // 3. [조회] 명세서에 따른 사진 및 앨범 목록 가져오기
+  // 3. [조회] 사진 및 앨범 목록 가져오기
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      // 사진 목록 조회 (정렬 및 페이징 파라미터 적용)
       const photoRes = await fetch(`${BASE_URL}/api/photos?sort=takenAt,desc&page=0&size=20`, {
         headers: getAuthHeaders()
       });
       const photoData = await photoRes.json();
 
-      // 앨범 목록 조회
       const albumRes = await fetch(`${BASE_URL}/api/albums`, {
         headers: getAuthHeaders()
       });
       const albumData = await albumRes.json();
 
-      // 서버 응답 구조가 { data: [...] } 형태인지 확인 필요
-      setPhotos(photoData.data || photoData || []);
-      setAlbums(albumData.data || albumData || []);
+      // 서버 응답 구조(photoData.data)에 따라 매핑
+      setPhotos(photoData.data || []);
+      setAlbums(albumData.data || []);
     } catch (error) {
       console.error("데이터 로드 실패:", error);
     } finally {
@@ -65,30 +61,49 @@ const Gallery = () => {
     return () => window.removeEventListener('click', handleClick);
   }, []);
 
-  // 4. [업로드] 사진 파일을 서버로 전송
+  // 4. [업로드] 명세서 규격에 맞춘 멀티파트 업로드
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
+    const token = localStorage.getItem("accessToken");
     const formData = new FormData();
-    formData.append("file", file); // 백엔드 키값 확인 필요
+    
+    // 필드명 'files'로 파일 추가 (명세서 기준)
+    formData.append("files", file); 
+
+    // 필드명 'request'로 JSON 메타데이터 추가
+    const requestBlob = new Blob(
+      [JSON.stringify({
+        caption: file.name.split('.')[0], // 파일명을 기본 캡션으로 설정
+        albumId: null // 특정 앨범 지정 시 ID 입력
+      })],
+      { type: "application/json" }
+    );
+    formData.append("request", requestBlob);
 
     try {
       const response = await fetch(`${BASE_URL}/api/photos`, {
         method: "POST",
-        headers: getAuthHeaders(),
+        headers: { "Authorization": `Bearer ${token}` }, // Content-Type은 브라우저 자동 설정에 맡김
         body: formData,
       });
-      if (response.ok) {
-        fetchAllData(); // 업로드 성공 후 목록 새로고침
-        e.target.value = '';
+
+      const result = await response.json();
+      if (response.ok && result.success) {
+        fetchAllData(); // 목록 갱신
+        alert("사진 업로드에 성공했습니다!");
+      } else {
+        alert(`업로드 실패: ${result.data || result.message}`);
       }
     } catch (error) {
-      alert("업로드 실패!");
+      alert("서버 연결에 실패했습니다.");
+    } finally {
+      e.target.value = '';
     }
   };
 
-  // 5. [삭제] 사진 및 앨범 삭제 (명세서 주소 적용)
+  // 5. [삭제] 
   const handleDelete = async () => {
     const url = menu.type === 'photo' 
       ? `${BASE_URL}/api/photos/${menu.targetId}` 
@@ -101,8 +116,8 @@ const Gallery = () => {
       });
 
       if (response.ok) {
-        if (menu.type === 'photo') setPhotos(prev => prev.filter(p => p.id !== menu.targetId));
-        else setAlbums(prev => prev.filter(a => a.id !== menu.targetId));
+        if (menu.type === 'photo') setPhotos(prev => prev.filter(p => p.photoId !== menu.targetId));
+        else setAlbums(prev => prev.filter(a => a.albumId !== menu.targetId));
       }
     } catch (error) {
       alert("삭제 실패");
@@ -110,7 +125,7 @@ const Gallery = () => {
     setMenu(prev => ({ ...prev, show: false }));
   };
 
-  // 6. [수정] 캡션 및 타이틀 수정 (명세서에 따라 POST 사용)
+  // 6. [수정] 캡션 수정 (명세서 기준 POST 사용)
   const handleEditComplete = async (e, id) => {
     if (e.key === 'Enter') {
       const newValue = e.target.value;
@@ -124,7 +139,7 @@ const Gallery = () => {
 
       try {
         const response = await fetch(url, {
-          method: "POST", // 명세서 기준 POST
+          method: "POST", 
           headers: {
             ...getAuthHeaders(),
             "Content-Type": "application/json"
@@ -133,8 +148,8 @@ const Gallery = () => {
         });
 
         if (response.ok) {
-          if (isPhoto) setPhotos(prev => prev.map(p => p.id === id ? { ...p, caption: newValue } : p));
-          else setAlbums(prev => prev.map(a => a.id === id ? { ...a, title: newValue } : a));
+          if (isPhoto) setPhotos(prev => prev.map(p => p.photoId === id ? { ...p, caption: newValue } : p));
+          else setAlbums(prev => prev.map(a => a.albumId === id ? { ...a, title: newValue } : a));
         }
       } catch (error) {
         alert("수정 실패");
@@ -143,7 +158,7 @@ const Gallery = () => {
     } else if (e.key === 'Escape') setEditingId(null);
   };
 
-  // 7. [앨범 생성] 모달 연동
+  // 7. [앨범 생성]
   const handleCreateAlbum = async (albumData) => {
     try {
       const response = await fetch(`${BASE_URL}/api/albums`, {
@@ -155,7 +170,7 @@ const Gallery = () => {
         body: JSON.stringify({ title: albumData.title })
       });
       if (response.ok) {
-        fetchAllData(); // 생성 후 목록 새로고침
+        fetchAllData();
         setIsModalOpen(false);
       }
     } catch (error) {
@@ -163,7 +178,7 @@ const Gallery = () => {
     }
   };
 
-  // --- 기존 인터랙션 로직 ---
+  // --- 헬퍼 로직 ---
   const startPress = (e, id, type) => {
     if (e.type === 'mousedown' && e.button !== 0) return;
     const currentTarget = e.currentTarget;
@@ -191,12 +206,7 @@ const Gallery = () => {
       isLongPressActive.current = false;
       return;
     }
-    if (album) handleAlbumClick(album);
-  };
-
-  const handleAlbumClick = (album) => {
-    if (editingId) return;
-    navigate(`/album/${album.id}`, { state: { album } });
+    if (album) navigate(`/album/${album.albumId}`, { state: { album } });
   };
 
   const handleContextMenu = (e, id, type) => {
@@ -222,8 +232,7 @@ const Gallery = () => {
 
   const groupedPhotos = useMemo(() => {
     return photos.reduce((acc, photo) => {
-      // 명세서 상 날짜 필드(takenAt 등)에 맞춰 date 추출 로직 수정이 필요할 수 있습니다.
-      const date = photo.takenAt?.split('T')[0].replace(/-/g, '.') || photo.date || "Unknown";
+      const date = photo.takenAt?.split('T')[0].replace(/-/g, '.') || photo.uploadedAt?.split('T')[0].replace(/-/g, '.') || "Unknown";
       if (!acc[date]) acc[date] = [];
       acc[date].push(photo);
       return acc;
@@ -262,7 +271,6 @@ const Gallery = () => {
         </div>
       )}
 
-      {/* 상단 탭 영역 */}
       <div className="tc-topbar">
         <div className="gallery-topnav">
           {tabs.map((tab, index) => (
@@ -287,7 +295,6 @@ const Gallery = () => {
         </div>
       </div>
 
-      {/* 메인 콘텐츠 영역 */}
       <div className="gallery-content-wrapper">
         {activeIndex === 0 ? (
           Object.keys(groupedPhotos).map((date) => (
@@ -295,32 +302,32 @@ const Gallery = () => {
               <h2 className="date-title">{date}</h2>
               <div className="photo-grid">
                 {groupedPhotos[date].map((photo) => {
-                  const isSpotlight = (menu.show && menu.targetId === photo.id) || (editingId === photo.id);
+                  const isSpotlight = (menu.show && menu.targetId === photo.photoId) || (editingId === photo.photoId);
                   return (
                     <div 
-                      key={photo.id} 
+                      key={photo.photoId} 
                       className={`photo-item ${isSpotlight ? 'spotlight' : ''}`} 
-                      onContextMenu={(e) => handleContextMenu(e, photo.id, 'photo')}
-                      onMouseDown={(e) => startPress(e, photo.id, 'photo')}
+                      onContextMenu={(e) => handleContextMenu(e, photo.photoId, 'photo')}
+                      onMouseDown={(e) => startPress(e, photo.photoId, 'photo')}
                       onMouseUp={cancelPress}
                       onMouseLeave={cancelPress}
-                      onTouchStart={(e) => startPress(e, photo.id, 'photo')}
+                      onTouchStart={(e) => startPress(e, photo.photoId, 'photo')}
                       onTouchEnd={cancelPress}
                       onClick={(e) => handleItemClick(e)} 
                     >
                       <div className="img-box">
-                        <img src={photo.url} alt="" />
+                        <img src={photo.imageUrl} alt="" />
                       </div>
-                      {editingId === photo.id ? (
+                      {editingId === photo.photoId ? (
                         <input 
                           className="edit-title-input" 
-                          defaultValue={photo.caption || photo.title} 
+                          defaultValue={photo.caption} 
                           autoFocus 
-                          onKeyDown={(e) => handleEditComplete(e, photo.id)} 
+                          onKeyDown={(e) => handleEditComplete(e, photo.photoId)} 
                           onBlur={() => setEditingId(null)} 
                         />
                       ) : (
-                        <p className="photo-title">{photo.caption || photo.title}</p>
+                        <p className="photo-title">{photo.caption}</p>
                       )}
                     </div>
                   );
@@ -332,27 +339,27 @@ const Gallery = () => {
           <div className="album-section">
             <div className="album-grid">
               {sortedAlbums.map((album) => {
-                const isSpotlight = (menu.show && menu.targetId === album.id) || (editingId === album.id);
+                const isSpotlight = (menu.show && menu.targetId === album.albumId) || (editingId === album.albumId);
                 return (
-                  <div key={album.id} className={`album-item ${isSpotlight ? 'spotlight' : ''}`} onClick={(e) => handleItemClick(e, album)}>
+                  <div key={album.albumId} className={`album-item ${isSpotlight ? 'spotlight' : ''}`} onClick={(e) => handleItemClick(e, album)}>
                     <div className="album-img-box">
                       <img src={album.coverUrl || 'https://via.placeholder.com/300'} alt="" />
                     </div>
                     <div className="album-info">
                       <div className="album-info-top">
-                        {editingId === album.id ? (
+                        {editingId === album.albumId ? (
                           <input 
                             className="edit-title-input" 
                             defaultValue={album.title} 
                             autoFocus 
-                            onKeyDown={(e) => handleEditComplete(e, album.id)} 
+                            onKeyDown={(e) => handleEditComplete(e, album.albumId)} 
                             onBlur={() => setEditingId(null)} 
                             onClick={(e) => e.stopPropagation()} 
                           />
                         ) : (
                           <h3>{album.title}</h3>
                         )}
-                        <button className="album-menu-trigger" onClick={(e) => handleAlbumMenuClick(e, album.id)}>
+                        <button className="album-menu-trigger" onClick={(e) => handleAlbumMenuClick(e, album.albumId)}>
                           <MoreVertical size={24} color="white" />
                         </button>
                       </div>
