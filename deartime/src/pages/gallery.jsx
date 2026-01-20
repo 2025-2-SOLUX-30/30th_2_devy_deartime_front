@@ -5,11 +5,6 @@ import { Pen, Trash2, MoreVertical } from "lucide-react";
 import bg from "../assets/background_nostar.png";
 import AlbumCreateModal from "../components/AlbumCreateModal";
 
-// 1. 서버 주소 설정
-// 배포 시 Mixed Content(HTTPS->HTTP) 차단을 막기 위해 프록시를 사용합니다.
-// vercel.json의 rewrites 설정을 통해 /api 요청이 백엔드로 전달됩니다.
-const BASE_URL = "";
-
 const Gallery = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -28,25 +23,31 @@ const Gallery = () => {
   const [editingId, setEditingId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const getAuthHeaders = () => ({
-    "Authorization": `Bearer ${localStorage.getItem("accessToken")}`,
-  });
+  // 인증 헤더 가져오기
+  const getAuthHeaders = (isMultipart = false) => {
+    const headers = {
+      "Authorization": `Bearer ${localStorage.getItem("accessToken")}`,
+    };
+    if (!isMultipart) headers["Content-Type"] = "application/json";
+    return headers;
+  };
 
-  // 3. [조회] 사진 및 앨범 목록 가져오기
+  // 1. 목록 조회 (상대 경로 사용)
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      const photoRes = await fetch(`${BASE_URL}/api/photos?sort=takenAt,desc&page=0&size=20`, {
+      // 사진 목록 조회
+      const photoRes = await fetch(`/api/photos?sort=takenAt,desc&page=0&size=20`, {
         headers: getAuthHeaders()
       });
       const photoData = await photoRes.json();
 
-      const albumRes = await fetch(`${BASE_URL}/api/albums`, {
+      // 앨범 목록 조회
+      const albumRes = await fetch(`/api/albums`, {
         headers: getAuthHeaders()
       });
       const albumData = await albumRes.json();
 
-      // 서버 응답 구조(photoData.data)에 따라 매핑
       setPhotos(photoData.data || []);
       setAlbums(albumData.data || []);
     } catch (error) {
@@ -63,53 +64,43 @@ const Gallery = () => {
     return () => window.removeEventListener('click', handleClick);
   }, []);
 
-  // 4. [업로드] 명세서 규격에 맞춘 멀티파트 업로드
+  // 2. 사진 업로드
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const token = localStorage.getItem("accessToken");
     const formData = new FormData();
-    
-    // 필드명 'files'로 파일 추가 (명세서 기준)
-    formData.append("files", file); 
+    formData.append("files", file); // 필드명 'files'
 
-    // 필드명 'request'로 JSON 메타데이터 추가
     const requestBlob = new Blob(
-      [JSON.stringify({
-        caption: file.name.split('.')[0], // 파일명을 기본 캡션으로 설정
-        albumId: null // 특정 앨범 지정 시 ID 입력
-      })],
+      [JSON.stringify({ caption: file.name.split('.')[0], albumId: null })],
       { type: "application/json" }
     );
-    formData.append("request", requestBlob);
+    formData.append("request", requestBlob); // 필드명 'request'
 
     try {
-      const response = await fetch(`${BASE_URL}/api/photos`, {
+      const response = await fetch(`/api/photos`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${token}` }, // Content-Type은 브라우저 자동 설정에 맡김
+        headers: { "Authorization": `Bearer ${localStorage.getItem("accessToken")}` },
         body: formData,
       });
 
-      const result = await response.json();
-      if (response.ok && result.success) {
-        fetchAllData(); // 목록 갱신
-        alert("사진 업로드에 성공했습니다!");
-      } else {
-        alert(`업로드 실패: ${result.data || result.message}`);
+      if (response.ok) {
+        fetchAllData();
+        alert("사진 업로드 성공!");
       }
     } catch (error) {
-      alert("서버 연결에 실패했습니다.");
+      alert("업로드 에러 발생");
     } finally {
       e.target.value = '';
     }
   };
 
-  // 5. [삭제] 
+  // 3. 사진/앨범 삭제
   const handleDelete = async () => {
     const url = menu.type === 'photo' 
-      ? `${BASE_URL}/api/photos/${menu.targetId}` 
-      : `${BASE_URL}/api/albums/${menu.targetId}`;
+      ? `/api/photos/${menu.targetId}` 
+      : `/api/albums/${menu.targetId}`;
 
     try {
       const response = await fetch(url, {
@@ -127,25 +118,18 @@ const Gallery = () => {
     setMenu(prev => ({ ...prev, show: false }));
   };
 
-  // 6. [수정] 캡션 수정 (명세서 기준 POST 사용)
+  // 4. 이름/캡션 수정 (POST 방식)
   const handleEditComplete = async (e, id) => {
     if (e.key === 'Enter') {
       const newValue = e.target.value;
       const isPhoto = activeIndex === 0;
-      
-      const url = isPhoto 
-        ? `${BASE_URL}/api/photos/${id}/caption` 
-        : `${BASE_URL}/api/albums/${id}/title`;
-
+      const url = isPhoto ? `/api/photos/${id}/caption` : `/api/albums/${id}/title`;
       const body = isPhoto ? { caption: newValue } : { title: newValue };
 
       try {
         const response = await fetch(url, {
-          method: "POST", 
-          headers: {
-            ...getAuthHeaders(),
-            "Content-Type": "application/json"
-          },
+          method: "POST",
+          headers: getAuthHeaders(),
           body: JSON.stringify(body)
         });
 
@@ -160,15 +144,11 @@ const Gallery = () => {
     } else if (e.key === 'Escape') setEditingId(null);
   };
 
-  // 7. [앨범 생성]
   const handleCreateAlbum = async (albumData) => {
     try {
-      const response = await fetch(`${BASE_URL}/api/albums`, {
+      const response = await fetch(`/api/albums`, {
         method: "POST",
-        headers: {
-          ...getAuthHeaders(),
-          "Content-Type": "application/json"
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ title: albumData.title })
       });
       if (response.ok) {
@@ -177,28 +157,6 @@ const Gallery = () => {
       }
     } catch (error) {
       alert("앨범 생성 실패");
-    }
-  };
-
-  // --- 헬퍼 로직 ---
-  const startPress = (e, id, type) => {
-    if (e.type === 'mousedown' && e.button !== 0) return;
-    const currentTarget = e.currentTarget;
-    isLongPressActive.current = false;
-    longPressTimerRef.current = setTimeout(() => {
-      const rect = currentTarget.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
-      setMenu({ show: true, x, y, targetId: id, type, isCentered: true });
-      isLongPressActive.current = true;
-      if (navigator.vibrate) navigator.vibrate(50);
-    }, 500); 
-  };
-
-  const cancelPress = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
     }
   };
 
@@ -211,57 +169,27 @@ const Gallery = () => {
     if (album) navigate(`/album/${album.albumId}`, { state: { album } });
   };
 
-  const handleContextMenu = (e, id, type) => {
-    e.preventDefault();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    setMenu({ show: true, x, y, targetId: id, type: type, isCentered: true });
-    isLongPressActive.current = true;
-  };
-
-  const handleAlbumMenuClick = (e, albumId) => {
-    e.stopPropagation(); 
-    const rect = e.currentTarget.getBoundingClientRect();
-    setMenu({ show: true, x: rect.left - 160, y: rect.bottom + 10, targetId: albumId, type: 'album', isCentered: false });
-  };
-
-  const handleEditStart = (e) => {
-    e.stopPropagation();
-    setEditingId(menu.targetId);
-    setMenu(prev => ({ ...prev, show: false }));
-  };
-
   const groupedPhotos = useMemo(() => {
     return photos.reduce((acc, photo) => {
-      const date = photo.takenAt?.split('T')[0].replace(/-/g, '.') || photo.uploadedAt?.split('T')[0].replace(/-/g, '.') || "Unknown";
+      const date = (photo.takenAt || photo.uploadedAt)?.split('T')[0].replace(/-/g, '.') || "Unknown";
       if (!acc[date]) acc[date] = [];
       acc[date].push(photo);
       return acc;
     }, {});
   }, [photos]);
-  
-  const sortedAlbums = useMemo(() => {
-    return [...albums].sort((a, b) => (a.isFavorite === b.isFavorite ? 0 : a.isFavorite ? -1 : 1));
-  }, [albums]);
 
   if (loading) return <div className="gallery-container" style={{color: 'white', padding: '50px'}}>데이터를 불러오는 중...</div>;
 
   return (
     <div className="gallery-container" style={{ backgroundImage: `url(${bg})` }}>
-      <AlbumCreateModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        onCreate={handleCreateAlbum} 
-      />
-
+      <AlbumCreateModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onCreate={handleCreateAlbum} />
       <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={handleFileUpload} />
-
+      
       {(menu.show || editingId !== null) && <div className="context-menu-overlay" />}
 
       {menu.show && (
         <div className={`custom-context-menu ${menu.isCentered ? 'centered' : ''}`} style={{ top: menu.y, left: menu.x }} onClick={(e) => e.stopPropagation()}>
-          <div className="menu-item" onClick={handleEditStart}>
+          <div className="menu-item" onClick={() => {setEditingId(menu.targetId); setMenu(prev=>({...prev, show:false}));}}>
             <Pen size={15} color="white" />
             <span>{menu.type === 'photo' ? '캡션 수정' : '이름 수정'}</span>
           </div>  
@@ -276,22 +204,14 @@ const Gallery = () => {
       <div className="tc-topbar">
         <div className="gallery-topnav">
           {tabs.map((tab, index) => (
-            <span
-              key={tab}
-              onClick={() => setActiveIndex(index)}
-              className={`gallery-tab ${index === activeIndex ? 'active' : ''}`}
-            >
+            <span key={tab} onClick={() => setActiveIndex(index)} className={`gallery-tab ${index === activeIndex ? 'active' : ''}`}>
               {tab}
               <span className="gallery-tab-underline" />
             </span>
           ))}
         </div>
         <div className="tc-topbar-right">
-          <button
-            type="button"
-            className="tc-create-btn"
-            onClick={() => activeIndex === 0 ? fileInputRef.current.click() : setIsModalOpen(true)}
-          >
+          <button className="tc-create-btn" onClick={() => activeIndex === 0 ? fileInputRef.current.click() : setIsModalOpen(true)}>
             {activeIndex === 0 ? '업로드' : '생성'}
           </button>
         </div>
@@ -306,28 +226,12 @@ const Gallery = () => {
                 {groupedPhotos[date].map((photo) => {
                   const isSpotlight = (menu.show && menu.targetId === photo.photoId) || (editingId === photo.photoId);
                   return (
-                    <div 
-                      key={photo.photoId} 
-                      className={`photo-item ${isSpotlight ? 'spotlight' : ''}`} 
-                      onContextMenu={(e) => handleContextMenu(e, photo.photoId, 'photo')}
-                      onMouseDown={(e) => startPress(e, photo.photoId, 'photo')}
-                      onMouseUp={cancelPress}
-                      onMouseLeave={cancelPress}
-                      onTouchStart={(e) => startPress(e, photo.photoId, 'photo')}
-                      onTouchEnd={cancelPress}
-                      onClick={(e) => handleItemClick(e)} 
-                    >
+                    <div key={photo.photoId} className={`photo-item ${isSpotlight ? 'spotlight' : ''}`} onContextMenu={(e) => {e.preventDefault(); const rect=e.currentTarget.getBoundingClientRect(); setMenu({show:true, x:rect.left+rect.width/2, y:rect.top+rect.height/2, targetId:photo.photoId, type:'photo', isCentered:true});}}>
                       <div className="img-box">
-                        <img src={photo.imageUrl} alt="" />
+                        <img src={photo.imageUrl} alt={photo.caption} />
                       </div>
                       {editingId === photo.photoId ? (
-                        <input 
-                          className="edit-title-input" 
-                          defaultValue={photo.caption} 
-                          autoFocus 
-                          onKeyDown={(e) => handleEditComplete(e, photo.photoId)} 
-                          onBlur={() => setEditingId(null)} 
-                        />
+                        <input className="edit-title-input" defaultValue={photo.caption} autoFocus onKeyDown={(e) => handleEditComplete(e, photo.photoId)} onBlur={() => setEditingId(null)} />
                       ) : (
                         <p className="photo-title">{photo.caption}</p>
                       )}
@@ -340,28 +244,21 @@ const Gallery = () => {
         ) : (
           <div className="album-section">
             <div className="album-grid">
-              {sortedAlbums.map((album) => {
+              {albums.map((album) => {
                 const isSpotlight = (menu.show && menu.targetId === album.albumId) || (editingId === album.albumId);
                 return (
                   <div key={album.albumId} className={`album-item ${isSpotlight ? 'spotlight' : ''}`} onClick={(e) => handleItemClick(e, album)}>
                     <div className="album-img-box">
-                      <img src={album.coverUrl || 'https://via.placeholder.com/300'} alt="" />
+                      <img src={album.coverUrl || 'https://via.placeholder.com/300'} alt={album.title} />
                     </div>
                     <div className="album-info">
                       <div className="album-info-top">
                         {editingId === album.albumId ? (
-                          <input 
-                            className="edit-title-input" 
-                            defaultValue={album.title} 
-                            autoFocus 
-                            onKeyDown={(e) => handleEditComplete(e, album.albumId)} 
-                            onBlur={() => setEditingId(null)} 
-                            onClick={(e) => e.stopPropagation()} 
-                          />
+                          <input className="edit-title-input" defaultValue={album.title} autoFocus onKeyDown={(e) => handleEditComplete(e, album.albumId)} onBlur={() => setEditingId(null)} onClick={(e)=>e.stopPropagation()} />
                         ) : (
                           <h3>{album.title}</h3>
                         )}
-                        <button className="album-menu-trigger" onClick={(e) => handleAlbumMenuClick(e, album.albumId)}>
+                        <button className="album-menu-trigger" onClick={(e) => {e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); setMenu({show:true, x:rect.left-160, y:rect.bottom+10, targetId:album.albumId, type:'album', isCentered:false});}}>
                           <MoreVertical size={24} color="white" />
                         </button>
                       </div>
